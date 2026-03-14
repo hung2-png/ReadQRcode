@@ -8,11 +8,11 @@
   <style>
     body { font-family: Arial, sans-serif; text-align: center; padding: 16px; margin: 0; background: #f7f7f7; }
     h2 { margin: 12px 0; font-size: 2rem; }
-    #cameraSelect { font-size: 16px; padding: 8px; margin: 10px 0 16px 0; max-width: 90%; }
+    #cameraSelect { font-size: 16px; padding: 8px; margin: 10px 0 16px 0; max-width: 90%; border-radius: 8px; }
     video { width: 95vw; max-width: 640px; border: 2px solid #333; border-radius: 12px; background: #000; display: block; margin: 12px auto; }
-    #result { margin-top: 20px; font-size: 1.8em; font-weight: bold; min-height: 2em; padding: 8px; border-radius: 8px; }
+    #result { margin-top: 20px; font-size: 1.8em; font-weight: bold; min-height: 2em; padding: 8px; border-radius: 10px; }
     .status-wait { color: black; }
-    .status-success { color: green; background: #d4edda; }
+    .status-ok { color: green; background: #d4edda; border: 2px solid #28a745; }
     .tip { color: #666; font-size: 14px; margin-top: 16px; }
   </style>
 </head>
@@ -31,7 +31,7 @@
   <div class="tip">請以 Chrome 開啟，並允許使用攝影機</div>
 
   <script>
-    // 1. 確保 URL 是您的正式 GAS 網址
+    // ✅ 已填入您指定的 GAS URL
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwMgDGjFfyHiasp6EalwEm6o3aIuZKYxKDPYdtGAyngxkyscvysIQAHfFUfLPjgKVPeiQ/exec";
 
     let video = null;
@@ -44,7 +44,7 @@
     function showMessage(msg, type = "wait") {
       const resultDiv = document.getElementById("result");
       resultDiv.textContent = msg;
-      resultDiv.className = type === "success" ? "status-success" : "status-wait";
+      resultDiv.className = (type === "ok") ? "status-ok" : "status-wait";
     }
 
     async function initCamera() {
@@ -67,7 +67,7 @@
         });
 
         if (videoDevices.length > 0) {
-          // 預設開啟最後一個鏡頭 (通常是後鏡頭)
+          // 預設開啟最後一個鏡頭（通常是行動裝置的後置鏡頭）
           await startCamera(videoDevices[videoDevices.length - 1].deviceId);
         }
       } catch (err) {
@@ -76,7 +76,7 @@
     }
 
     async function startCamera(deviceId) {
-      if (stream) { stream.getTracks().forEach(track => track.stop()); }
+      if (stream) stream.getTracks().forEach(track => track.stop());
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { deviceId: { exact: deviceId } }
@@ -85,11 +85,11 @@
         scanning = true;
         scanLoop();
       } catch (err) {
-        showMessage("❌ 攝影機錯誤", "wait");
+        showMessage("❌ 攝影機啟動失敗", "wait");
       }
     }
 
-    // ✅ 修改後的提交函式：對接「兩欄式」GAS
+    // ✅ 傳送資料：僅傳送原始內容 qrText
     async function submitQRData(qrData) {
       try {
         await fetch(GAS_WEB_APP_URL, {
@@ -97,9 +97,10 @@
           mode: "no-cors",
           body: JSON.stringify({ qrText: qrData })
         });
-        return "✅ 簽到成功";
+        return true;
       } catch (e) {
-        return "❌ 傳送失敗";
+        console.error("Upload error:", e);
+        return false;
       }
     }
 
@@ -116,7 +117,6 @@
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(imageData.data, imageData.width, imageData.height);
 
@@ -125,22 +125,19 @@
           scanning = false;
           isSubmitting = true;
 
-          // 抓取姓名 (QR內容：學號,姓名,日期...)
-          const parts = qrData.split(',');
+          // 解析姓名 (格式：學號,姓名,日期,節次,科目)
+          const parts = qrData.split(",");
           const studentName = parts[1] || "同學";
 
           showMessage(`⏳ 處理中：${studentName}`, "wait");
 
-          submitQRData(qrData).then(msg => {
-            if (msg.includes("✅")) {
-              showMessage(`✅ ${studentName} 簽到成功`, "success");
-              speak(studentName + " 簽到成功");
-              if (navigator.vibrate) navigator.vibrate(200);
-            } else {
-              showMessage(msg, "wait");
-            }
+          submitQRData(qrData).then(() => {
+            showMessage(`✅ ${studentName} 簽到成功`, "ok");
+            speak(studentName + " 簽到成功");
+            
+            if (navigator.vibrate) navigator.vibrate(200);
 
-            // 1.2 秒後恢復掃描
+            // 1.2 秒後恢復掃描狀態
             setTimeout(() => {
               showMessage("等待掃描中...", "wait");
               scanning = true;
@@ -156,9 +153,7 @@
 
     document.addEventListener("DOMContentLoaded", () => {
       initCamera();
-      document.getElementById("cameraSelect").addEventListener("change", (e) => {
-        startCamera(e.target.value);
-      });
+      document.getElementById("cameraSelect").onchange = (e) => startCamera(e.target.value);
     });
   </script>
 </body>
