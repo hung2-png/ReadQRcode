@@ -3,123 +3,160 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>學生 QR Code 簽到系統</title>
+  <title>KSSH 學生掃描簽到系統</title>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 16px; margin: 0; background: #f7f7f7; }
-    h2 { margin: 12px 0; font-size: 1.8rem; color: #333; }
-    .controls { margin-bottom: 15px; }
-    #cameraSelect { font-size: 16px; padding: 10px; width: 90%; max-width: 400px; border-radius: 8px; border: 1px solid #ccc; }
-    #video-container { position: relative; width: 95vw; max-width: 640px; margin: 0 auto; }
-    video { width: 100%; border: 3px solid #444; border-radius: 12px; background: #000; }
-    #result { margin-top: 15px; font-size: 2em; font-weight: bold; min-height: 2.2em; padding: 15px; border-radius: 12px; transition: 0.3s; }
-    .status-wait { color: #666; background: #eee; }
-    .status-ok { color: #fff; background: #28a745; border: none; }
-    .tip { color: #888; font-size: 14px; margin-top: 15px; }
+    body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 16px; margin: 0; background: #f4f7f9; }
+    .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+    h2 { margin: 10px 0; color: #2c3e50; }
+    #cameraSelect { font-size: 16px; padding: 10px; width: 100%; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; background: #fff; }
+    #video-wrap { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+    video { width: 100%; display: block; }
+    #result { margin-top: 20px; font-size: 1.8rem; font-weight: bold; min-height: 2.5em; padding: 15px; border-radius: 10px; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; }
+    
+    /* 狀態顏色 */
+    .status-wait { color: #7f8c8d; background: #ecf0f1; }
+    .status-ok { color: #ffffff; background: #27ae60; border: 2px solid #2ecc71; }
+    .status-error { color: #ffffff; background: #e74c3c; }
+
+    .tip { color: #95a5a6; font-size: 0.9rem; margin-top: 15px; }
   </style>
 </head>
 <body>
+
+<div class="container">
   <h2>📷 學生掃描簽到</h2>
 
-  <div class="controls">
-    <select id="cameraSelect">正在偵測攝影機...</select>
-  </div>
+  <select id="cameraSelect">正在偵測攝影機...</select>
 
-  <div id="video-container">
+  <div id="video-wrap">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas" style="display:none;"></canvas>
   </div>
 
   <div id="result" class="status-wait">等待掃描中...</div>
-  <div class="tip">筆電/平板建議：環境光線充足可提高辨識率</div>
+  
+  <div class="tip">提示：請將 QR Code 靠近鏡頭，確保光線充足。</div>
+</div>
 
-  <script>
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbwMgDGjFfyHiasp6EalwEm6o3aIuZKYxKDPYdtGAyngxkyscvysIQAHfFUfLPjgKVPeiQ/exec";
+<script>
+  // 1. 您的 GAS Web App 網址
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbwMgDGjFfyHiasp6EalwEm6o3aIuZKYxKDPYdtGAyngxkyscvysIQAHfFUfLPjgKVPeiQ/exec";
 
-    let video, canvas, ctx, stream;
-    let scanning = false;
-    let isSubmitting = false;
+  let video, canvas, ctx, stream;
+  let scanning = false;
+  let isSubmitting = false;
 
-    function showStatus(msg, isSuccess = false) {
-      const res = document.getElementById("result");
-      res.textContent = msg;
-      res.className = isSuccess ? "status-ok" : "status-wait";
+  function updateUI(msg, mode = "wait") {
+    const res = document.getElementById("result");
+    res.textContent = msg;
+    if (mode === "ok") res.className = "status-ok";
+    else if (mode === "error") res.className = "status-error";
+    else res.className = "status-wait";
+  }
+
+  // 初始化攝影機
+  async function initCamera() {
+    video = document.getElementById("video");
+    canvas = document.getElementById("canvas");
+    ctx = canvas.getContext("2d");
+    const cameraSelect = document.getElementById("cameraSelect");
+
+    try {
+      await navigator.mediaDevices.getUserMedia({ video: true });
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === "videoinput");
+
+      cameraSelect.innerHTML = "";
+      videoDevices.forEach((device, i) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.text = device.label || `鏡頭 ${i + 1}`;
+        cameraSelect.appendChild(option);
+      });
+
+      // 如果是行動裝置，通常最後一個是後置鏡頭
+      const defaultIdx = videoDevices.length > 1 ? videoDevices.length - 1 : 0;
+      startCamera(videoDevices[defaultIdx].deviceId);
+
+      cameraSelect.onchange = () => startCamera(cameraSelect.value);
+    } catch (err) {
+      updateUI("❌ 無法啟動攝影機", "error");
     }
+  }
 
-    async function initCamera() {
-      video = document.getElementById("video");
-      canvas = document.getElementById("canvas");
-      ctx = canvas.getContext("2d");
-      const cameraSelect = document.getElementById("cameraSelect");
+  async function startCamera(deviceId) {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ 
+      video: { deviceId: { exact: deviceId } } 
+    });
+    video.srcObject = stream;
+    scanning = true;
+    requestAnimationFrame(scanLoop);
+  }
 
-      try {
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === "videoinput");
+  // 語音功能
+  function speak(name) {
+    if ('speechSynthesis' in window) {
+      const utter = new SpeechSynthesisUtterance(name + " 簽到成功");
+      utter.lang = "zh-TW";
+      utter.rate = 1.0;
+      speechSynthesis.speak(utter);
+    }
+  }
 
-        cameraSelect.innerHTML = "";
-        videoDevices.forEach((device, i) => {
-          const option = document.createElement("option");
-          option.value = device.deviceId;
-          option.text = device.label || `攝影機 ${i + 1}`;
-          cameraSelect.appendChild(option);
+  // 掃描迴圈
+  function scanLoop() {
+    if (!scanning || isSubmitting) return;
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imgData.data, imgData.width, imgData.height);
+
+      if (code && code.data.trim()) {
+        const qrData = code.data.trim();
+        isSubmitting = true;
+
+        // 解析姓名邏輯：抓取 6 位數字(學號)之後的 2-4 個中文字
+        const nameMatch = qrData.match(/\d{6}([\u4e00-\u9fa5]{2,4})/);
+        const studentName = nameMatch ? nameMatch[1] : "同學";
+
+        updateUI(`⏳ 處理中：${studentName}`, "wait");
+
+        // 傳送至 GAS (僅寫入原始內容)
+        fetch(GAS_URL, {
+          method: "POST",
+          mode: "no-cors",
+          body: JSON.stringify({ qrText: qrData })
+        })
+        .then(() => {
+          updateUI(`✅ ${studentName} 簽到成功`, "ok");
+          speak(studentName);
+          if (navigator.vibrate) navigator.vibrate(200);
+
+          // 1.5 秒後重置，準備下一位
+          setTimeout(() => {
+            isSubmitting = false;
+            updateUI("等待掃描中...", "wait");
+            requestAnimationFrame(scanLoop);
+          }, 1500);
+        })
+        .catch(err => {
+          updateUI("❌ 傳送失敗", "error");
+          isSubmitting = false;
+          requestAnimationFrame(scanLoop);
         });
-
-        // 預設啟動：如果是平板通常最後一個是後鏡頭；筆電則是第一個
-        const defaultId = videoDevices.length > 1 ? videoDevices[videoDevices.length - 1].deviceId : videoDevices[0].deviceId;
-        startCamera(defaultId);
-      } catch (err) {
-        showStatus("❌ 無法啟動攝影機");
+        return;
       }
     }
+    requestAnimationFrame(scanLoop);
+  }
 
-    async function startCamera(deviceId) {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
-      video.srcObject = stream;
-      scanning = true;
-      requestAnimationFrame(scanLoop);
-    }
+  document.addEventListener("DOMContentLoaded", initCamera);
+</script>
 
-    function scanLoop() {
-      if (!scanning || isSubmitting) return;
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imgData.data, imgData.width, imgData.height);
-
-        if (code && code.data.trim()) {
-          const qrData = code.data.trim();
-          isSubmitting = true;
-          const studentName = qrData.split(',')[1] || "同學";
-
-          showStatus("⏳ 傳送中...");
-          
-          fetch(GAS_URL, { method: "POST", mode: "no-cors", body: JSON.stringify({ qrText: qrData }) })
-            .then(() => {
-              showStatus(`✅ ${studentName} 簽到成功`, true);
-              if ('speechSynthesis' in window) {
-                const utter = new SpeechSynthesisUtterance(studentName + "簽到成功");
-                utter.lang = "zh-TW";
-                speechSynthesis.speak(utter);
-              }
-              
-              setTimeout(() => {
-                isSubmitting = false;
-                showStatus("等待掃描中...");
-                requestAnimationFrame(scanLoop);
-              }, 1200);
-            });
-          return;
-        }
-      }
-      requestAnimationFrame(scanLoop);
-    }
-
-    document.addEventListener("DOMContentLoaded", initCamera);
-    document.getElementById("cameraSelect").onchange = (e) => startCamera(e.target.value);
-  </script>
 </body>
 </html>
