@@ -9,15 +9,13 @@
     body { font-family: "Microsoft JhengHei", Arial, sans-serif; text-align: center; padding: 16px; margin: 0; background: #f4f7f9; }
     .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
     h2 { margin: 10px 0; color: #2c3e50; }
-    #cameraSelect { font-size: 16px; padding: 10px; width: 100%; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; background: #fff; cursor: pointer; }
+    #cameraSelect { font-size: 16px; padding: 10px; width: 100%; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; background: #fff; }
     #video-wrap { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
     video { width: 100%; display: block; }
     #result { margin-top: 20px; font-size: 1.8rem; font-weight: bold; min-height: 2.5em; padding: 15px; border-radius: 10px; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; }
-    
     .status-wait { color: #7f8c8d; background: #ecf0f1; }
     .status-ok { color: #ffffff; background: #27ae60; border: 2px solid #2ecc71; }
     .status-error { color: #ffffff; background: #e74c3c; }
-
     .tip { color: #95a5a6; font-size: 0.9rem; margin-top: 15px; }
   </style>
 </head>
@@ -25,33 +23,25 @@
 
 <div class="container">
   <h2>📷 學生掃描簽到</h2>
-
   <select id="cameraSelect">正在偵測攝影機...</select>
-
   <div id="video-wrap">
     <video id="video" autoplay playsinline muted></video>
     <canvas id="canvas" style="display:none;"></canvas>
   </div>
-
   <div id="result" class="status-wait">等待掃描中...</div>
-  
-  <div class="tip">提示：請將 QR Code 靠近鏡頭，確保環境光線充足。</div>
+  <div class="tip">筆電/平板建議：光線充足可大幅提高辨識率</div>
 </div>
 
 <script>
-  // ✅ 已更新為您的 GAS URL
+  // ✅ 您的 GAS URL
   const GAS_URL = "https://script.google.com/macros/s/AKfycbwMgDGjFfyHiasp6EalwEm6o3aIuZKYxKDPYdtGAyngxkyscvysIQAHfFUfLPjgKVPeiQ/exec";
 
-  let video, canvas, ctx, stream;
-  let scanning = false;
-  let isSubmitting = false;
+  let video, canvas, ctx, stream, scanning = false, isSubmitting = false;
 
   function updateUI(msg, mode = "wait") {
     const res = document.getElementById("result");
     res.textContent = msg;
-    if (mode === "ok") res.className = "status-ok";
-    else if (mode === "error") res.className = "status-error";
-    else res.className = "status-wait";
+    res.className = (mode === "ok") ? "status-ok" : (mode === "error" ? "status-error" : "status-wait");
   }
 
   async function initCamera() {
@@ -59,12 +49,10 @@
     canvas = document.getElementById("canvas");
     ctx = canvas.getContext("2d");
     const cameraSelect = document.getElementById("cameraSelect");
-
     try {
       await navigator.mediaDevices.getUserMedia({ video: true });
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(d => d.kind === "videoinput");
-
       cameraSelect.innerHTML = "";
       videoDevices.forEach((device, i) => {
         const option = document.createElement("option");
@@ -72,40 +60,29 @@
         option.text = device.label || `鏡頭 ${i + 1}`;
         cameraSelect.appendChild(option);
       });
-
-      // 預設開啟最後一個鏡頭（通常平板的最後一個是後置鏡頭，筆電只有一個）
-      const defaultIdx = videoDevices.length > 1 ? videoDevices.length - 1 : 0;
-      startCamera(videoDevices[defaultIdx].deviceId);
-
+      startCamera(videoDevices[videoDevices.length - 1].deviceId);
       cameraSelect.onchange = () => startCamera(cameraSelect.value);
-    } catch (err) {
-      updateUI("❌ 無法啟動攝影機", "error");
-    }
+    } catch (err) { updateUI("❌ 無法啟動攝影機", "error"); }
   }
 
   async function startCamera(deviceId) {
     if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { deviceId: { exact: deviceId } } 
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } } });
     video.srcObject = stream;
     scanning = true;
     requestAnimationFrame(scanLoop);
   }
 
-  // 語音朗讀功能
   function speak(name) {
     if ('speechSynthesis' in window) {
       const utter = new SpeechSynthesisUtterance(name + " 簽到成功");
       utter.lang = "zh-TW";
-      utter.rate = 1.0;
       speechSynthesis.speak(utter);
     }
   }
 
   function scanLoop() {
     if (!scanning || isSubmitting) return;
-
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -116,33 +93,33 @@
       if (code && code.data.trim()) {
         const qrData = code.data.trim();
         isSubmitting = true;
-
-        // ✅ 修正：針對連在一起的格式 (學號6碼+姓名) 抓取學生姓名
+        
+        // 自動抓名：學號(6碼)之後的中文
         const nameMatch = qrData.match(/\d{6}([\u4e00-\u9fa5]{2,4})/);
         const studentName = nameMatch ? nameMatch[1] : "同學";
 
         updateUI(`⏳ 處理中：${studentName}`, "wait");
 
-        // 傳送原始資料至 GAS
+        // 使用 URLSearchParams 確保資料格式正確
+        const params = new URLSearchParams();
+        params.append('qrText', qrData);
+
         fetch(GAS_URL, {
           method: "POST",
           mode: "no-cors",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ qrText: qrData })
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString()
         })
         .then(() => {
           updateUI(`✅ ${studentName} 簽到成功`, "ok");
           speak(studentName);
-          if (navigator.vibrate) navigator.vibrate(200);
-
-          // 1.5 秒後重置，準備下一位
           setTimeout(() => {
             isSubmitting = false;
-            updateUI("等待掃描中...", "wait");
+            updateUI("等待掃描中...");
             requestAnimationFrame(scanLoop);
           }, 1500);
         })
-        .catch(err => {
+        .catch(() => {
           updateUI("❌ 傳送失敗", "error");
           isSubmitting = false;
           requestAnimationFrame(scanLoop);
@@ -152,9 +129,7 @@
     }
     requestAnimationFrame(scanLoop);
   }
-
   document.addEventListener("DOMContentLoaded", initCamera);
 </script>
-
 </body>
 </html>
